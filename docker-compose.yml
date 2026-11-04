@@ -1,0 +1,60 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: accessreview
+      POSTGRES_USER: accessreview
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U accessreview"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - app-network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://accessreview:${POSTGRES_PASSWORD}@postgres:5432/accessreview
+      AGENT_TOKENS_JSON: ${AGENT_TOKENS_JSON:?set in .env}
+      ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:?set in .env}
+    ports:
+      # Expose backend port for agent ingestion & admin API
+      - "${BACKEND_PORT:-8000}:8000"
+    networks:
+      - app-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      # In production VPS behind a domain with HTTPS, set to your backend domain (e.g. host.example.com)
+      # or backend:8000 if using HTTP proxying internally.
+      API_UPSTREAM: ${API_UPSTREAM:-host.pasinduudana.me}
+    ports:
+      # Expose Web Dashboard
+      - "${FRONTEND_PORT:-3000}:80"
+    networks:
+      - app-network
+
+volumes:
+  pgdata:
+
+networks:
+  app-network:
+    driver: bridge
+

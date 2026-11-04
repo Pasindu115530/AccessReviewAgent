@@ -1,0 +1,32 @@
+name: Build Windows Agent
+
+on:
+  push:
+    paths:
+      - 'src/**'
+      - 'scripts/**'
+      - '.github/workflows/build-windows.yml'
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+      - name: Install .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Publish Windows package
+        shell: pwsh
+        run: ./scripts/publish-windows.ps1
+      - name: Upload installable Windows ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: AccessReviewAgent-Windows-win-x64
+          path: output/
+          if-no-files-found: error
+          retention-days: 14

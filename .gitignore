@@ -1,0 +1,10 @@
+**/bin/
+**/obj/
+**/.vs/
+**/*.user
+*.zip
+.env
+config.json
+queue.db*
+status.json
+__pycache__/

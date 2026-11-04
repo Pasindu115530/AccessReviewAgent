@@ -1,0 +1,31 @@
+[Unit]
+Description=AccessReviewAgent Linux Security and Access Audit Collector
+Documentation=man:journalctl(1)
+Wants=network-online.target
+After=network-online.target systemd-journald.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/accessreview-agent/agent.py run
+WorkingDirectory=/opt/accessreview-agent
+Restart=on-failure
+RestartSec=10
+User=root
+Group=root
+UMask=0077
+StateDirectory=accessreview-agent
+StateDirectoryMode=0700
+RuntimeDirectory=accessreview-agent
+RuntimeDirectoryMode=0755
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

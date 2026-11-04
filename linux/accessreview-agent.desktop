@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=AccessReviewAgent
+Comment=Linux access-review collection status
+Exec=python3 /opt/accessreview-agent/desktop.py
+Terminal=false
+Type=Application
+Categories=System;Monitor;
+Icon=security-high

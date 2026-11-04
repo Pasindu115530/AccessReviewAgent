@@ -1,0 +1,30 @@
+# Optional local testing stack. For existing Coolify PostgreSQL, deploy only
+# the Dockerfile and set DATABASE_URL to the existing private DB service.
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: accessreview
+      POSTGRES_USER: accessreview
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U accessreview"]
+      interval: 5s
+      retries: 10
+  api:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://accessreview:${POSTGRES_PASSWORD}@postgres:5432/accessreview
+      AGENT_TOKENS_JSON: ${AGENT_TOKENS_JSON:?set in .env}
+      ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:?set in .env}
+    ports:
+      - "127.0.0.1:8000:8000"
+volumes:
+  pgdata:

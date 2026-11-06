@@ -43,20 +43,25 @@ function saveTextFile(content, filename, type) {
 }
 function csvCell(value) {
   const raw = String(value ?? '');
-  // Prevent formulas from executing in spreadsheet programs.
   const safe = /^[\s]*[=+@\-]/.test(raw) ? `'${raw}` : raw;
   return `"${safe.replaceAll('"', '""')}"`;
 }
 function makeCsv(devices) {
-  return [
-    ['Device ID', 'Event count', 'Last event UTC'].map(csvCell).join(','),
-    ...devices.map((device) => [device.device_id, device.event_count, device.last_event_utc ?? ''].map(csvCell).join(',')),
-  ].join('\r\n');
+  const headers = ['Device ID', 'Employee Name', 'Platform', 'Status', 'Recorded Events', 'Last Event UTC'];
+  const rows = devices.map((d) => [
+    csvCell(d.device_id),
+    csvCell(d.employee_name || 'N/A'),
+    csvCell(d.platform || 'windows'),
+    csvCell(d.status || 'active'),
+    d.event_count,
+    csvCell(d.last_event_utc || 'None'),
+  ].join(','));
+  return [headers.join(','), ...rows].join('\r\n');
 }
 
 function Brand({ compact = false }) {
   return <div className="brand">
-    <div className="brand-logo"><Icon name="shield" size={23} strokeWidth={2.1} /></div>
+    <div className="brand-logo"><Icon name="shield" size={24} /></div>
     {!compact && <div className="brand-name">Access<span>Review</span><small>SECURITY CONSOLE</small></div>}
   </div>;
 }
@@ -85,58 +90,269 @@ function NoData({ heading, description, icon = 'monitor' }) {
   return <div className="empty-state"><EmptyGraphic icon={icon} /><h3>{heading}</h3><p>{description}</p></div>;
 }
 
-function Login({ onConnect, loading, error }) {
-  const [enteredToken, setEnteredToken] = useState('');
-  const [reveal, setReveal] = useState(false);
-  return <div className="login-shell">
-    <section className="login-visual">
-      <div className="login-visual-content">
-        <Brand />
-        <div className="visual-copy"><span className="eyebrow light">CENTRALIZED ACCESS GOVERNANCE</span><h1>Complete visibility.<br /><em>Confident decisions.</em></h1><p>A single place to review security telemetry from Windows and Linux devices.</p></div>
-        <div className="visual-flow"><div><Icon name="monitor" /><span>Windows & Linux</span></div><span className="flow-line"/><div><Icon name="server"/><span>FastAPI</span></div><span className="flow-line"/><div><Icon name="database"/><span>PostgreSQL</span></div></div>
-        <p className="visual-footer">AccessReviewAgent · Prototype security dashboard</p>
+function AddDeviceModal({ isOpen, onClose, onCreated, adminToken }) {
+  const [employeeName, setEmployeeName] = useState('');
+  const [platform, setPlatform] = useState('windows');
+  const [customDeviceId, setCustomDeviceId] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [result, setResult] = useState(null);
+  const [copied, setCopied] = useState(false);
+
+  if (!isOpen) return null;
+
+  const handleCreate = async (e) => {
+    e.preventDefault();
+    if (!employeeName.trim()) return;
+    setLoading(true);
+    setError('');
+    try {
+      const res = await fetch('/api/admin/devices', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Admin-Token': adminToken,
+        },
+        body: JSON.stringify({
+          employee_name: employeeName.trim(),
+          platform,
+          custom_device_id: customDeviceId.trim() || undefined,
+        }),
+      });
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.detail || `Server returned ${res.status}`);
+      }
+      const data = await res.json();
+      setResult(data);
+      if (onCreated) onCreated();
+    } catch (err) {
+      setError(err?.message || 'Failed to register device.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const copyToken = () => {
+    if (!result?.token) return;
+    navigator.clipboard.writeText(result.token);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2500);
+  };
+
+  const closeAndReset = () => {
+    setEmployeeName('');
+    setCustomDeviceId('');
+    setPlatform('windows');
+    setResult(null);
+    setError('');
+    onClose();
+  };
+
+  return <div className="modal-backdrop" onClick={closeAndReset}>
+    <div className="modal-window" onClick={(e) => e.stopPropagation()}>
+      <div className="modal-header">
+        <h2>{result ? 'Device Registered Successfully' : 'Register New Device'}</h2>
+        <button className="modal-close" onClick={closeAndReset}><Icon name="close" size={19} /></button>
       </div>
-      <div className="orb orb-one"/><div className="orb orb-two"/><div className="grid-decoration"/>
-    </section>
-    <section className="login-form-pane">
-      <div className="login-mobile-brand"><Brand /></div>
-      <div className="login-card">
-        <div className="small-label"><span className="small-purple-dot"/> ADMIN ACCESS</div>
-        <h2>Welcome back</h2><p className="login-intro">Connect securely to your AccessReview workspace.</p>
-        <form onSubmit={(event) => {event.preventDefault(); onConnect(enteredToken);}}>
-          <label className="field-label" htmlFor="admin-token">Admin API token</label>
-          <div className="input-token"><Icon name="lock" size={18}/><input id="admin-token" type={reveal ? 'text' : 'password'} value={enteredToken} onChange={(event)=>setEnteredToken(event.target.value)} autoComplete="off" placeholder="Enter ADMIN_API_TOKEN" minLength={1} required/><button type="button" className="reveal-button" onClick={()=>setReveal((v)=>!v)}>{reveal ? 'Hide' : 'Show'}</button></div>
-          <div className="endpoint-label"><Icon name="server" size={15} /> Connects via secure same-origin API proxy</div>
-          {error && <div className="form-error" role="alert"><Icon name="alert" size={17}/><span>{error}</span></div>}
-          <button className="primary-button connect-button" type="submit" disabled={loading || !enteredToken.trim()}>{loading ? <><Icon name="refresh" size={17} className="spin"/> Connecting…</> : <>Connect to dashboard <Icon name="arrow" size={18}/></>}</button>
+
+      {!result ? (
+        <form onSubmit={handleCreate}>
+          <div className="modal-body">
+            {error && <div className="form-error"><Icon name="alert" size={17} /><span>{error}</span></div>}
+            
+            <div className="form-group">
+              <label>Employee Name *</label>
+              <input 
+                type="text" 
+                placeholder="e.g. Kasun Perera, Jane Smith" 
+                value={employeeName}
+                onChange={(e) => setEmployeeName(e.target.value)}
+                required
+                autoFocus
+              />
+            </div>
+
+            <div className="form-group">
+              <label>Operating System (Platform) *</label>
+              <div className="platform-selector">
+                <div 
+                  className={`platform-option ${platform === 'windows' ? 'active' : ''}`}
+                  onClick={() => setPlatform('windows')}
+                >
+                  <Icon name="windows" size={20} />
+                  <span>Windows PC</span>
+                </div>
+                <div 
+                  className={`platform-option ${platform === 'linux' ? 'active' : ''}`}
+                  onClick={() => setPlatform('linux')}
+                >
+                  <Icon name="linux" size={20} />
+                  <span>Linux Server/Desktop</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label>Custom Device ID (Optional - Auto-generated if blank)</label>
+              <input 
+                type="text" 
+                placeholder={platform === 'windows' ? 'e.g. WIN-KASUN-01' : 'e.g. LNX-KASUN-01'} 
+                value={customDeviceId}
+                onChange={(e) => setCustomDeviceId(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="modal-footer">
+            <button type="button" className="secondary-button" onClick={closeAndReset}>Cancel</button>
+            <button type="submit" className="primary-button" disabled={loading || !employeeName.trim()}>
+              {loading ? 'Generating Token…' : 'Generate Token & Add Device'}
+            </button>
+          </div>
         </form>
-        <div className="login-security"><Icon name="shield" size={17}/><span>Token stays in this browser tab's memory. It is not saved to local storage.</span></div>
-      </div>
-      <div className="login-credit">Built for the AccessReviewAgent prototype</div>
-    </section>
+      ) : (
+        <div className="modal-body">
+          <p style={{ fontSize: '13px', color: '#55607a' }}>
+            New credentials for <strong>{result.employee_name}</strong> ({result.device_id}). Copy this token now to paste into the client app:
+          </p>
+          
+          <div className="token-display-box">
+            <div className="token-label">DEVICE SECRET TOKEN</div>
+            <code>{result.token}</code>
+          </div>
+
+          <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
+            <button type="button" className="primary-button" onClick={copyToken} style={{ flex: 1 }}>
+              <Icon name={copied ? 'check' : 'copy'} size={17} />
+              {copied ? 'Copied to Clipboard!' : 'Copy Device Token'}
+            </button>
+          </div>
+
+          <div className="config-snippet">
+            <strong>Quick Setup Instructions:</strong>
+            <p style={{ margin: '6px 0 0', fontSize: '11px', color: '#737f99' }}>
+              {result.platform === 'windows' 
+                ? `1. Open AccessReviewAgent UI on user PC.\n2. Device ID: ${result.device_id}\n3. Server URL: ${window.location.origin}\n4. Paste this Token.`
+                : `Run: sudo python3 configure.py --device-id "${result.device_id}" --server-url "${window.location.origin}" --token "${result.token}"`}
+            </p>
+          </div>
+
+          <div className="modal-footer" style={{ padding: '20px 0 0', marginTop: '20px' }}>
+            <button type="button" className="secondary-button" onClick={closeAndReset}>Done</button>
+          </div>
+        </div>
+      )}
+    </div>
   </div>;
 }
 
-function DeviceTable({ devices, filter = '', showSearch = false }) {
+function DeviceTable({ devices, filter = '', showSearch = false, onOpenAdd, onDeleteDevice }) {
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState('events');
+
   const visible = useMemo(() => {
-    const matched = devices.filter((device) => device.device_id.toLowerCase().includes((filter || query).toLowerCase()));
+    const matched = devices.filter((device) => {
+      const q = (filter || query).toLowerCase();
+      return device.device_id.toLowerCase().includes(q) || 
+             (device.employee_name && device.employee_name.toLowerCase().includes(q));
+    });
     return matched.sort((a, b) => {
       if (sort === 'name') return a.device_id.localeCompare(b.device_id);
+      if (sort === 'employee') return (a.employee_name || '').localeCompare(b.employee_name || '');
       if (sort === 'latest') return (dateValue(b.last_event_utc)?.getTime() || 0) - (dateValue(a.last_event_utc)?.getTime() || 0);
       return b.event_count - a.event_count;
     });
   }, [devices, filter, query, sort]);
+
   return <>
-    {showSearch && <div className="table-toolbar"><div className="search-box"><Icon name="search" size={18}/><input type="search" value={query} onChange={(e)=>setQuery(e.target.value)} placeholder="Search device ID…" aria-label="Search device ID"/></div><div className="sort-control"><Icon name="filter" size={16}/><select value={sort} onChange={(e)=>setSort(e.target.value)} aria-label="Sort devices"><option value="events">Most events</option><option value="latest">Latest activity</option><option value="name">Device ID</option></select></div></div>}
-    {!visible.length ? <NoData icon="monitor" heading={devices.length ? 'No matching devices' : 'No devices reporting events'} description={devices.length ? 'Try a different device ID.' : 'Once your agents send events, devices will appear here automatically.'}/> :
-    <div className="table-scroll"><table className="data-table"><thead><tr><th>DEVICE</th><th>RECORDED EVENTS</th><th>LAST EVENT</th><th>EVENT DATA</th></tr></thead><tbody>{visible.map((device)=><tr key={device.device_id}>
-      <td><div className="device-name"><span className="device-avatar"><Icon name="monitor" size={18}/></span><span><strong>{device.device_id}</strong><small>Agent device ID</small></span></div></td>
-      <td><span className="table-count">{number(device.event_count)}</span></td>
-      <td><span className="table-time">{relativeDate(device.last_event_utc)}<small>{fullDate(device.last_event_utc)}</small></span></td>
-      <td><MiniStatus ok={Number(device.event_count)>0}>Recorded</MiniStatus></td>
-    </tr>)}</tbody></table></div>}
+    {showSearch && <div className="table-toolbar">
+      <div className="search-box">
+        <Icon name="search" size={18}/>
+        <input type="search" value={query} onChange={(e)=>setQuery(e.target.value)} placeholder="Search by Device or Employee…" aria-label="Search"/>
+      </div>
+      <div style={{ display: 'flex', gap: '10px' }}>
+        <div className="sort-control">
+          <Icon name="filter" size={16}/>
+          <select value={sort} onChange={(e)=>setSort(e.target.value)} aria-label="Sort devices">
+            <option value="events">Most events</option>
+            <option value="latest">Latest activity</option>
+            <option value="employee">Employee name</option>
+            <option value="name">Device ID</option>
+          </select>
+        </div>
+        {onOpenAdd && (
+          <button className="primary-button" onClick={onOpenAdd} style={{ padding: '0 16px', height: '39px' }}>
+            <Icon name="plus" size={16} /> Add Device
+          </button>
+        )}
+      </div>
+    </div>}
+    
+    {!visible.length ? (
+      <NoData icon="monitor" heading={devices.length ? 'No matching devices' : 'No devices registered yet'} description={devices.length ? 'Try a different search term.' : 'Click "Add Device" above to register unlimited employee laptops or servers.'}/>
+    ) : (
+      <div className="table-scroll">
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>DEVICE & EMPLOYEE</th>
+              <th>PLATFORM</th>
+              <th>STATUS</th>
+              <th>RECORDED EVENTS</th>
+              <th>LAST EVENT</th>
+              {onDeleteDevice && <th style={{ textAlign: 'right' }}>ACTIONS</th>}
+            </tr>
+          </thead>
+          <tbody>
+            {visible.map((device)=>(
+              <tr key={device.device_id}>
+                <td>
+                  <div className="device-name">
+                    <span className="device-avatar">
+                      <Icon name={device.platform === 'linux' ? 'linux' : 'monitor'} size={18}/>
+                    </span>
+                    <span>
+                      <strong>{device.device_id}</strong>
+                      <small>{device.employee_name || 'System / Unassigned'}</small>
+                    </span>
+                  </div>
+                </td>
+                <td>
+                  <span className={`badge-platform ${device.platform || 'windows'}`}>
+                    <Icon name={device.platform === 'linux' ? 'linux' : 'windows'} size={13} />
+                    {device.platform || 'windows'}
+                  </span>
+                </td>
+                <td>
+                  <MiniStatus ok={device.status === 'active'}>{device.status || 'Active'}</MiniStatus>
+                </td>
+                <td><span className="table-count">{number(device.event_count)}</span></td>
+                <td>
+                  <span className="table-time">
+                    {relativeDate(device.last_event_utc)}
+                    <small>{fullDate(device.last_event_utc)}</small>
+                  </span>
+                </td>
+                {onDeleteDevice && (
+                  <td style={{ textAlign: 'right' }}>
+                    <button 
+                      type="button" 
+                      className="icon-button" 
+                      title="Revoke / Delete device"
+                      onClick={() => onDeleteDevice(device.device_id)}
+                      style={{ color: '#d9534f' }}
+                    >
+                      <Icon name="trash" size={16} />
+                    </button>
+                  </td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )}
   </>;
 }
 
@@ -145,41 +361,67 @@ function Distribution({ devices }) {
   const max = Math.max(...top.map((device)=>device.event_count), 1);
   return <Panel title="Event distribution" subtitle="Recorded events by device">
     {!top.length ? <NoData heading="No event data yet" description="Device event totals will appear after the first successful agent uploads." icon="chart" /> : <div className="distribution-list">
-      {top.map((device, i)=><div className="distribution-item" key={device.device_id}><div className="distribution-top"><span className="bar-name">{device.device_id}</span><strong>{number(device.event_count)}</strong></div><div className="bar-track"><div className={`bar-fill tone-${i%5}`} style={{width:`${Math.max(2, device.event_count / max * 100)}%`}}/></div></div>)}
+      {top.map((device, i)=><div className="distribution-item" key={device.device_id}><div className="distribution-top"><span className="bar-name">{device.device_id} ({device.employee_name || 'Unassigned'})</span><strong>{number(device.event_count)}</strong></div><div className="bar-track"><div className={`bar-fill tone-${i%5}`} style={{width:`${Math.max(2, device.event_count / max * 100)}%`}}/></div></div>)}
     </div>}
     <div className="panel-footnote"><Icon name="info" size={15}/> Counts are cumulative, not a time-series trend.</div>
   </Panel>;
 }
 
-function Overview({ summary, devices, goTo }) {
+function Overview({ summary, devices, goTo, onOpenAdd }) {
   const total = devices.reduce((sum, device) => sum + device.event_count, 0);
   const timestamps = devices.map((device) => dateValue(device.last_event_utc)?.getTime()).filter(Boolean);
   const latest = timestamps.length ? new Date(Math.max(...timestamps)).toISOString() : null;
   return <>
-    <div className="intro-bar"><div><div className="eyebrow">SECURITY OVERVIEW</div><h1>Workspace overview</h1><p>Real-time refresh of the data your agents have uploaded.</p></div><span className="updated-chip"><span className="pulse-dot"/> Ingest API connected</span></div>
+    <div className="intro-bar">
+      <div>
+        <div className="eyebrow">SECURITY OVERVIEW</div>
+        <h1>Workspace overview</h1>
+        <p>Real-time fleet monitoring and security telemetry across all registered employee devices.</p>
+      </div>
+      <div style={{ display: 'flex', gap: '10px' }}>
+        <button className="primary-button" onClick={onOpenAdd}>
+          <Icon name="plus" size={17} /> Add New Device
+        </button>
+      </div>
+    </div>
     <div className="stat-grid">
-      <StatCard icon="monitor" label="Devices with events" value={number(devices.length)} note="Based on event records" style="purple"/>
+      <StatCard icon="monitor" label="Total devices" value={number(devices.length)} note="Registered in fleet" style="purple"/>
       <StatCard icon="activity" label="Events ingested" value={number(total)} note="Across all devices" style="blue"/>
       <StatCard icon="database" label="Account snapshots" value={number(summary.snapshots)} note="Total snapshots received" style="orange"/>
       <StatCard icon="clock" label="Latest recorded event" value={latest ? relativeDate(latest) : '—'} note={latest ? fullDate(latest) : 'No events available'} style="green"/>
     </div>
-    <div className="overview-grid"><Distribution devices={devices}/>
-      <Panel title="System health" subtitle="Ingestion and data availability"><div className="health-stack">
-        <div className="health-item"><span className="health-icon good"><Icon name="check" size={19}/></span><div><strong>Admin API reachable</strong><p>Authenticated summary request succeeded</p></div><MiniStatus ok>Ready</MiniStatus></div>
-        <div className="health-item"><span className="health-icon neutral"><Icon name="database" size={18}/></span><div><strong>Snapshot records</strong><p>{number(summary.snapshots)} stored account snapshots</p></div></div>
-        <div className="health-item"><span className="health-icon neutral"><Icon name="info" size={19}/></span><div><strong>Detailed log browsing</strong><p>Needs additional read-only API endpoints</p></div></div>
-      </div><div className="health-note"><Icon name="info" size={16}/> Devices with no events may not appear. Recent events do not prove an agent is online.</div></Panel>
+    <div className="overview-grid">
+      <Distribution devices={devices}/>
+      <Panel title="System health" subtitle="Ingestion and device fleet status">
+        <div className="health-stack">
+          <div className="health-item"><span className="health-icon good"><Icon name="check" size={19}/></span><div><strong>Admin & Ingest API active</strong><p>Database connected & accepting event batches</p></div><MiniStatus ok>Ready</MiniStatus></div>
+          <div className="health-item"><span className="health-icon neutral"><Icon name="monitor" size={18}/></span><div><strong>Fleet provisioning</strong><p>Dynamic token generation enabled for unlimited devices</p></div></div>
+          <div className="health-item"><span className="health-icon neutral"><Icon name="database" size={18}/></span><div><strong>Snapshot records</strong><p>{number(summary.snapshots)} stored account snapshots</p></div></div>
+        </div>
+        <div className="health-note"><Icon name="info" size={16}/> Registered devices can upload telemetry immediately using their generated bearer tokens.</div>
+      </Panel>
     </div>
-    <Panel title="Devices reporting events" subtitle="Latest results from your current PostgreSQL records" action={<button className="text-button" onClick={()=>goTo('devices')}>View all devices <Icon name="chevron" size={16}/></button>}>
+    <Panel title="Devices fleet summary" subtitle="Active registered devices" action={<button className="text-button" onClick={()=>goTo('devices')}>View all devices <Icon name="chevron" size={16}/></button>}>
       <DeviceTable devices={devices.slice(0,5)}/>
     </Panel>
   </>;
 }
 
-function DevicesPage({ devices }) {
-  return <><div className="intro-bar"><div><div className="eyebrow">FLEET MONITORING</div><h1>Devices</h1><p>View every device with at least one uploaded access event.</p></div><span className="soft-badge"><Icon name="monitor" size={16}/>{number(devices.length)} devices</span></div>
-    <Panel title="Agent devices" subtitle="Results from /api/admin/summary"><DeviceTable devices={devices} showSearch/></Panel>
-    <div className="info-banner"><Icon name="info" size={18}/><p><strong>Device availability:</strong> This endpoint only lists devices that have recorded events. It does not report online/offline state, agent heartbeats, or per-device snapshots.</p></div>
+function DevicesPage({ devices, onOpenAdd, onDeleteDevice }) {
+  return <>
+    <div className="intro-bar">
+      <div>
+        <div className="eyebrow">FLEET MANAGEMENT</div>
+        <h1>Devices & Employees</h1>
+        <p>Add unlimited devices, assign to employees, and generate auth tokens for Windows & Linux agents.</p>
+      </div>
+      <button className="primary-button" onClick={onOpenAdd}>
+        <Icon name="plus" size={17} /> Add New Device
+      </button>
+    </div>
+    <Panel title="All registered devices" subtitle="Live database records with token authorization">
+      <DeviceTable devices={devices} showSearch onOpenAdd={onOpenAdd} onDeleteDevice={onDeleteDevice}/>
+    </Panel>
   </>;
 }
 
@@ -199,28 +441,84 @@ function ReportsPage({ summary, devices }) {
   const downloadCsv=()=>saveTextFile(makeCsv(devices),`accessreview-devices-${new Date().toISOString().slice(0,10)}.csv`,'text/csv;charset=utf-8');
   return <><div className="intro-bar"><div><div className="eyebrow">AUDIT EXPORTS</div><h1>Reports</h1><p>Export the actual summary data currently available from the API.</p></div></div>
     <div className="report-grid"><div className="report-card"><span className="report-icon"><Icon name="file" size={25}/></span><h2>Summary JSON</h2><p>Complete response from the authenticated summary endpoint, including snapshot count and device totals.</p><button className="secondary-button" onClick={downloadJson}><Icon name="download" size={17}/> Download JSON</button></div>
-    <div className="report-card"><span className="report-icon alternate"><Icon name="chart" size={25}/></span><h2>Device events CSV</h2><p>A spreadsheet-ready export listing device IDs, cumulative event counts and last recorded events.</p><button className="secondary-button" onClick={downloadCsv}><Icon name="download" size={17}/> Download CSV</button></div></div>
-    <div className="info-banner"><Icon name="info" size={18}/><p><strong>Audit-ready reporting requires more data.</strong> These exports contain aggregate information only. Individual event logs, entitlement histories and reviewer decisions need additional authenticated backend endpoints.</p></div>
+    <div className="report-card"><span className="report-icon alternate"><Icon name="chart" size={25}/></span><h2>Device events CSV</h2><p>A spreadsheet-ready export listing device IDs, employee names, platforms, and cumulative event counts.</p><button className="secondary-button" onClick={downloadCsv}><Icon name="download" size={17}/> Download CSV</button></div></div>
   </>;
 }
 function SettingsPage({ summary, onLogout, refresh }) {
   return <><div className="intro-bar"><div><div className="eyebrow">WORKSPACE</div><h1>Settings</h1><p>Connection details and session controls for this console.</p></div></div>
     <div className="settings-grid"><Panel title="API connection" subtitle="Secure same-origin proxy"><div className="setting-row"><span>API summary path</span><code>/api/admin/summary</code></div><div className="setting-row"><span>Refresh interval</span><strong>30 seconds</strong></div><div className="setting-row"><span>Last generated</span><strong>{fullDate(summary.generated_at_utc)}</strong></div><div className="setting-row"><span>Authentication</span><strong>Admin token header</strong></div></Panel>
-    <Panel title="Session & security" subtitle="Protecting your workspace"><div className="security-list"><div><Icon name="check" size={18}/><span>Admin token retained only in application memory</span></div><div><Icon name="check" size={18}/><span>No credentials committed to frontend source</span></div><div><Icon name="check" size={18}/><span>Production proxy forwards only the permitted read endpoint</span></div></div><div className="settings-actions"><button className="secondary-button" onClick={refresh}><Icon name="refresh" size={17}/> Refresh now</button><button className="danger-button" onClick={onLogout}><Icon name="logout" size={17}/> Disconnect</button></div></Panel></div>
+    <Panel title="Session & security" subtitle="Protecting your workspace"><div className="security-list"><div><Icon name="check" size={18}/><span>Dynamic device tokens stored securely in PostgreSQL</span></div><div><Icon name="check" size={18}/><span>Admin token retained only in browser memory</span></div><div><Icon name="check" size={18}/><span>Windows & Linux agent ingest active</span></div></div><div className="settings-actions"><button className="secondary-button" onClick={refresh}><Icon name="refresh" size={17}/> Refresh now</button><button className="danger-button" onClick={onLogout}><Icon name="logout" size={17}/> Disconnect</button></div></Panel></div>
   </>;
 }
 
-function Dashboard({ summary, onLogout, onRefresh, refreshing, refreshError, lastRefreshed }) {
+function Login({ onConnect, loading, error }) {
+  const [enteredToken, setEnteredToken] = useState('');
+  const [reveal, setReveal] = useState(false);
+  return <div className="login-shell">
+    <section className="login-visual">
+      <div className="login-visual-content">
+        <Brand />
+        <div className="visual-copy"><span className="eyebrow light">CENTRALIZED ACCESS GOVERNANCE</span><h1>Complete visibility.<br /><em>Confident decisions.</em></h1><p>A single place to review security telemetry from Windows and Linux devices.</p></div>
+        <div className="visual-flow"><div><Icon name="monitor" /><span>Windows & Linux</span></div><span className="flow-line"/><div><Icon name="server"/><span>FastAPI</span></div><span className="flow-line"/><div><Icon name="database"/><span>PostgreSQL</span></div></div>
+        <p className="visual-footer">AccessReviewAgent · Security Dashboard</p>
+      </div>
+      <div className="orb orb-one"/><div className="orb orb-two"/><div className="grid-decoration"/>
+    </section>
+    <section className="login-form-pane">
+      <div className="login-mobile-brand"><Brand /></div>
+      <div className="login-card">
+        <div className="small-label"><span className="small-purple-dot"/> ADMIN ACCESS</div>
+        <h2>Welcome back</h2><p className="login-intro">Connect securely to your AccessReview workspace.</p>
+        <form onSubmit={(event) => {event.preventDefault(); onConnect(enteredToken);}}>
+          <label className="field-label" htmlFor="admin-token">Admin API token</label>
+          <div className="input-token"><Icon name="lock" size={18}/><input id="admin-token" type={reveal ? 'text' : 'password'} value={enteredToken} onChange={(event)=>setEnteredToken(event.target.value)} autoComplete="off" placeholder="Enter ADMIN_API_TOKEN" minLength={1} required/><button type="button" className="reveal-button" onClick={()=>setReveal((v)=>!v)}>{reveal ? 'Hide' : 'Show'}</button></div>
+          <div className="endpoint-label"><Icon name="server" size={15} /> Connects via secure same-origin API proxy</div>
+          {error && <div className="form-error" role="alert"><Icon name="alert" size={17}/><span>{error}</span></div>}
+          <button className="primary-button connect-button" type="submit" disabled={loading || !enteredToken.trim()}>{loading ? <><Icon name="refresh" size={17} className="spin"/> Connecting…</> : <>Connect to dashboard <Icon name="arrow" size={18}/></>}</button>
+        </form>
+        <div className="login-security"><Icon name="shield" size={17}/><span>Token stays in this browser tab's memory. It is not saved to local storage.</span></div>
+      </div>
+      <div className="login-credit">AccessReviewAgent Fleet Management</div>
+    </section>
+  </div>;
+}
+
+function Dashboard({ summary, onLogout, onRefresh, refreshing, refreshError, lastRefreshed, adminToken }) {
   const [page, setPage] = useState('overview');
   const [menuOpen, setMenuOpen] = useState(false);
-  const devices = useMemo(()=>Array.isArray(summary.devices) ? summary.devices.map((dev)=>({device_id:String(dev.device_id || 'Unknown'),event_count:Number(dev.event_count)||0,last_event_utc:dev.last_event_utc || null})) : [],[summary]);
+  const [isAddOpen, setIsAddOpen] = useState(false);
+
+  const devices = useMemo(()=>Array.isArray(summary.devices) ? summary.devices.map((dev)=>({
+    device_id: String(dev.device_id || 'Unknown'),
+    employee_name: dev.employee_name || '',
+    platform: dev.platform || 'windows',
+    status: dev.status || 'active',
+    event_count: Number(dev.event_count)||0,
+    last_event_utc: dev.last_event_utc || null,
+  })) : [], [summary]);
+
   const pageTitle = NAV.find((item)=>item.id===page)?.text || (page === 'settings' ? 'Settings':'Overview');
   const navigate=(next)=>{setPage(next);setMenuOpen(false);window.scrollTo({top:0,behavior:'smooth'});};
+
+  const handleDeleteDevice = async (deviceId) => {
+    if (!window.confirm(`Are you sure you want to delete/revoke device "${deviceId}"?`)) return;
+    try {
+      const res = await fetch(`/api/admin/devices/${encodeURIComponent(deviceId)}`, {
+        method: 'DELETE',
+        headers: { 'X-Admin-Token': adminToken },
+      });
+      if (!res.ok) throw new Error('Failed to delete device');
+      onRefresh();
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+
   return <div className="app-shell">
     {menuOpen && <button className="mobile-overlay" onClick={()=>setMenuOpen(false)} aria-label="Close menu"/>}
     <aside className={`sidebar ${menuOpen?'sidebar-open':''}`}>
       <div className="sidebar-brand"><Brand /><button className="menu-close" onClick={()=>setMenuOpen(false)} aria-label="Close navigation"><Icon name="close" size={20}/></button></div>
-      <div className="workspace-chip"><span className="workspace-avatar">A</span><div><strong>AccessReview</strong><small>Enterprise workspace</small></div><Icon name="chevron" size={17}/></div>
+      <div className="workspace-chip"><span className="workspace-avatar">A</span><div><strong>AccessReview</strong><small>Fleet workspace</small></div><Icon name="chevron" size={17}/></div>
       <nav className="sidebar-nav" aria-label="Primary navigation"><div className="nav-label">WORKSPACE</div>
         {NAV.slice(0,2).map((nav)=><button key={nav.id} className={`nav-item ${page===nav.id?'active':''}`} onClick={()=>navigate(nav.id)}><Icon name={nav.icon} size={19}/><span>{nav.text}</span>{page===nav.id && <span className="nav-active-dot"/>}</button>)}
         <div className="nav-label section-spacer">ACCESS GOVERNANCE</div>
@@ -231,17 +529,35 @@ function Dashboard({ summary, onLogout, onRefresh, refreshing, refreshError, las
       <div className="sidebar-footer"><div className="sidebar-health"><span className="pulse-dot"/><div><strong>API connected</strong><small>Summary available</small></div></div><button className="sidebar-logout" onClick={onLogout}><Icon name="logout" size={17}/> Disconnect <Icon name="chevron" size={15}/></button></div>
     </aside>
     <main className="main-area">
-      <header className="topbar"><div className="top-left"><button className="mobile-menu" onClick={()=>setMenuOpen(true)} aria-label="Open navigation"><Icon name="menu" size={23}/></button><div className="breadcrumb">Workspace <Icon name="chevron" size={15}/> <strong>{pageTitle}</strong></div></div><div className="top-actions"><span className="top-live"><span className="pulse-dot"/> Synced {relativeDate(lastRefreshed)}</span><IconButton icon="refresh" title="Refresh data" onClick={onRefresh} disabled={refreshing}/><span className="top-divider"/><div className="profile-avatar" title="Admin session">AD</div></div></header>
+      <header className="topbar">
+        <div className="top-left">
+          <button className="mobile-menu" onClick={()=>setMenuOpen(true)} aria-label="Open navigation"><Icon name="menu" size={23}/></button>
+          <div className="breadcrumb">Workspace <Icon name="chevron" size={15}/> <strong>{pageTitle}</strong></div>
+        </div>
+        <div className="top-actions">
+          <span className="top-live"><span className="pulse-dot"/> Synced {relativeDate(lastRefreshed)}</span>
+          <IconButton icon="refresh" title="Refresh data" onClick={onRefresh} disabled={refreshing}/>
+          <span className="top-divider"/>
+          <div className="profile-avatar" title="Admin session">AD</div>
+        </div>
+      </header>
       <div className="page-content">
         {refreshError && <div className="refresh-warning" role="alert"><Icon name="alert" size={18}/><div><strong>Refresh failed.</strong> {refreshError} Showing the last successful response.</div><button onClick={onRefresh}>Try again</button></div>}
-        {page==='overview' && <Overview summary={summary} devices={devices} goTo={navigate}/>}
-        {page==='devices' && <DevicesPage devices={devices}/>}
+        {page==='overview' && <Overview summary={summary} devices={devices} goTo={navigate} onOpenAdd={() => setIsAddOpen(true)} />}
+        {page==='devices' && <DevicesPage devices={devices} onOpenAdd={() => setIsAddOpen(true)} onDeleteDevice={handleDeleteDevice} />}
         {FEATURE_INFO[page] && <PlannedPage id={page} goTo={navigate}/>}
         {page==='reports' && <ReportsPage devices={devices} summary={summary}/>}
         {page==='settings' && <SettingsPage summary={summary} onLogout={onLogout} refresh={onRefresh}/>}
-        <footer className="page-footer"><span>© {new Date().getFullYear()} AccessReviewAgent</span><span>Prototype console · Read-only administrative view</span></footer>
+        <footer className="page-footer"><span>© {new Date().getFullYear()} AccessReviewAgent</span><span>Dynamic fleet management console</span></footer>
       </div>
     </main>
+
+    <AddDeviceModal 
+      isOpen={isAddOpen} 
+      onClose={() => setIsAddOpen(false)} 
+      onCreated={onRefresh}
+      adminToken={adminToken}
+    />
   </div>;
 }
 
@@ -261,10 +577,10 @@ export default function App() {
       cache: 'no-store',
       signal: AbortSignal.timeout(20000),
     });
-    if (response.status === 401 || response.status === 403) throw new Error('Invalid admin token. Check ADMIN_API_TOKEN in Coolify.');
+    if (response.status === 401 || response.status === 403) throw new Error('Invalid admin token. Check ADMIN_API_TOKEN in Coolify / .env.');
     if (!response.ok) throw new Error(`API returned HTTP ${response.status}. Verify the backend and proxy.`);
     const data = await response.json();
-    if (!data || !Array.isArray(data.devices) || typeof data.snapshots !== 'number') throw new Error('Unexpected API response. Check /api/admin/summary.');
+    if (!data || !Array.isArray(data.devices) || typeof data.snapshots !== 'number') throw new Error('Unexpected API response.');
     return data;
   }, []);
 
@@ -281,6 +597,7 @@ export default function App() {
       setError(err?.message === 'The operation was aborted due to timeout' ? 'Connection timed out. Check your backend.' : err?.message || 'Could not reach the API.');
     } finally {setLoading(false);}
   };
+
   const refresh = useCallback(async (secret=token) => {
     if (!secret) return;
     setRefreshing(true);
@@ -293,12 +610,24 @@ export default function App() {
       setRefreshError(err?.message || 'Unable to refresh.');
     } finally {setRefreshing(false);}
   }, [token, getSummary]);
+
   useEffect(() => {
     if (!token) return;
     const timer = window.setInterval(() => refresh(token), 30000);
     return () => window.clearInterval(timer);
   }, [token, refresh]);
+
   const logout = () => {setToken('');setSummary(null);setError('');setRefreshError('');};
+
   if (!token || !summary) return <Login onConnect={connect} loading={loading} error={error}/>;
-  return <Dashboard summary={summary} onLogout={logout} onRefresh={()=>refresh()} refreshing={refreshing} refreshError={refreshError} lastRefreshed={lastRefreshed}/>;
+
+  return <Dashboard 
+    summary={summary} 
+    onLogout={logout} 
+    onRefresh={()=>refresh()} 
+    refreshing={refreshing} 
+    refreshError={refreshError} 
+    lastRefreshed={lastRefreshed}
+    adminToken={token}
+  />;
 }

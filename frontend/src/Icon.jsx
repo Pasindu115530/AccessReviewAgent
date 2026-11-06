@@ -28,6 +28,11 @@ const shapes = {
   info: <><circle cx="12" cy="12" r="9"/><path d="M12 11v5m0-8h.01"/></>,
   key: <><circle cx="8" cy="15" r="5"/><path d="m12 11 9-9M17 6l3 3"/></>,
   server: <><rect x="3" y="3" width="18" height="8" rx="2"/><rect x="3" y="13" width="18" height="8" rx="2"/><path d="M7 7h.01M7 17h.01M11 7h6m-6 10h6"/></>,
+  plus: <><path d="M5 12h14M12 5v14"/></>,
+  copy: <><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></>,
+  trash: <><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></>,
+  linux: <><ellipse cx="12" cy="12" rx="7" ry="9"/><circle cx="10" cy="9" r="1"/><circle cx="14" cy="9" r="1"/><path d="m11 13 1 1 1-1"/></>,
+  windows: <><path d="M3 5.5 10 4.5v6.5H3V5.5zm8-.6 10-1.4v8H11V4.9zm0 8.1h10v8l-10-1.4v-6.6zm-8 0h7v6.5L3 18.5V13z"/></>,
 };
 
 export default function Icon({ name = 'info', size = 20, className = '', strokeWidth = 1.8 }) {

@@ -425,15 +425,225 @@ function DevicesPage({ devices, onOpenAdd, onDeleteDevice }) {
   </>;
 }
 
+function EventsPage({ adminToken }) {
+  const [events, setEvents] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [filterDevice, setFilterDevice] = useState('');
+  const [filterCategory, setFilterCategory] = useState('');
+
+  const fetchEvents = useCallback(async () => {
+    setLoading(true);
+    try {
+      let url = '/api/admin/events?limit=100';
+      if (filterDevice) url += `&device_id=${encodeURIComponent(filterDevice)}`;
+      if (filterCategory) url += `&category=${encodeURIComponent(filterCategory)}`;
+      const res = await fetch(url, {
+        headers: { 'X-Admin-Token': adminToken },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setEvents(data.events || []);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  }, [adminToken, filterDevice, filterCategory]);
+
+  useEffect(() => {
+    fetchEvents();
+  }, [fetchEvents]);
+
+  return <>
+    <div className="intro-bar">
+      <div>
+        <div className="eyebrow">SECURITY TELEMETRY</div>
+        <h1>Access Events Log</h1>
+        <p>Live security events ingested from Windows & Linux agents (Logins, Failed Logins, Privileges).</p>
+      </div>
+      <button className="secondary-button" onClick={fetchEvents} disabled={loading}>
+        <Icon name="refresh" size={16} className={loading ? 'spin' : ''} /> Refresh Events
+      </button>
+    </div>
+
+    <Panel title="Recent Ingested Events" subtitle={`Showing latest ${events.length} security events`}>
+      <div className="table-toolbar">
+        <div className="search-box">
+          <Icon name="search" size={18}/>
+          <input 
+            type="search" 
+            value={filterDevice} 
+            onChange={(e)=>setFilterDevice(e.target.value)} 
+            placeholder="Filter by Device ID (e.g. DESKTOP-…)"
+          />
+        </div>
+        <div className="sort-control">
+          <Icon name="filter" size={16}/>
+          <select value={filterCategory} onChange={(e)=>setFilterCategory(e.target.value)}>
+            <option value="">All Categories</option>
+            <option value="Logon">Logon</option>
+            <option value="FailedLogon">Failed Logon</option>
+            <option value="AccountManagement">Account Management</option>
+            <option value="PrivilegeUse">Privilege Use</option>
+            <option value="Snapshot">Snapshot</option>
+          </select>
+        </div>
+      </div>
+
+      {!events.length ? (
+        <NoData icon="activity" heading="No events found" description="When agents detect user logins or account changes, they will appear here live." />
+      ) : (
+        <div className="table-scroll">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>TIMESTAMP</th>
+                <th>DEVICE</th>
+                <th>USER / IDENTITY</th>
+                <th>EVENT CATEGORY</th>
+                <th>EVENT ID</th>
+                <th>SOURCE IP</th>
+              </tr>
+            </thead>
+            <tbody>
+              {events.map((ev) => (
+                <tr key={ev.event_uid}>
+                  <td>
+                    <span className="table-time">
+                      {relativeDate(ev.occurred_at_utc)}
+                      <small>{fullDate(ev.occurred_at_utc)}</small>
+                    </span>
+                  </td>
+                  <td><strong>{ev.device_id}</strong></td>
+                  <td>
+                    <span style={{ fontWeight: 600, color: '#35415e' }}>
+                      {ev.username ? `${ev.domain ? ev.domain + '\\' : ''}${ev.username}` : 'SYSTEM / N/A'}
+                    </span>
+                  </td>
+                  <td>
+                    <span className={`status-pill ${ev.event_category?.includes('Failed') ? 'neutral' : 'success'}`}>
+                      {ev.event_category || 'Event'}
+                    </span>
+                  </td>
+                  <td><code>{ev.event_id}</code></td>
+                  <td><small>{ev.source_ip || 'Local / Console'}</small></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Panel>
+  </>;
+}
+
+function AccountsPage({ adminToken }) {
+  const [snapshots, setSnapshots] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchSnapshots = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/admin/snapshots/latest', {
+        headers: { 'X-Admin-Token': adminToken },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSnapshots(data.snapshots || []);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  }, [adminToken]);
+
+  useEffect(() => {
+    fetchSnapshots();
+  }, [fetchSnapshots]);
+
+  return <>
+    <div className="intro-bar">
+      <div>
+        <div className="eyebrow">IDENTITIES & ENTITLEMENTS</div>
+        <h1>Accounts & Roles</h1>
+        <p>Inspect local user accounts, administrator groups, and privilege roles collected by agents.</p>
+      </div>
+      <button className="secondary-button" onClick={fetchSnapshots} disabled={loading}>
+        <Icon name="refresh" size={16} className={loading ? 'spin' : ''} /> Refresh Snapshots
+      </button>
+    </div>
+
+    {!snapshots.length ? (
+      <Panel>
+        <NoData icon="users" heading="No snapshots collected yet" description="Agents collect account snapshots periodically (e.g. hourly) or upon service start." />
+      </Panel>
+    ) : (
+      snapshots.map((snap) => (
+        <Panel key={snap.device_id} title={`Device: ${snap.device_id}`} subtitle={`Snapshot taken: ${fullDate(snap.collected_at_utc)}`}>
+          <div style={{ padding: '0 24px 20px' }}>
+            <h3 style={{ fontSize: '14px', margin: '15px 0 10px', color: '#27324c' }}>Local Users ({snap.accounts?.length || 0})</h3>
+            <div className="table-scroll">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>USERNAME</th>
+                    <th>ENABLED</th>
+                    <th>ADMIN / PRIVILEGED</th>
+                    <th>LAST LOGON</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(snap.accounts || []).map((acc, idx) => (
+                    <tr key={idx}>
+                      <td><strong>{acc.name || acc.username || JSON.stringify(acc)}</strong></td>
+                      <td><MiniStatus ok={acc.enabled !== false}>{acc.enabled === false ? 'Disabled' : 'Enabled'}</MiniStatus></td>
+                      <td>{acc.is_admin || acc.admin ? <span className="status-pill success">Administrator</span> : <span className="status-pill neutral">Standard</span>}</td>
+                      <td><small>{acc.last_logon ? fullDate(acc.last_logon) : 'Never / Unknown'}</small></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {snap.groups?.length > 0 && (
+              <>
+                <h3 style={{ fontSize: '14px', margin: '25px 0 10px', color: '#27324c' }}>Security Groups & Members ({snap.groups.length})</h3>
+                <div className="table-scroll">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>GROUP NAME</th>
+                        <th>MEMBERS</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {snap.groups.map((grp, idx) => (
+                        <tr key={idx}>
+                          <td><strong>{grp.name || grp.group_name}</strong></td>
+                          <td><code>{Array.isArray(grp.members) ? grp.members.join(', ') : (grp.members || 'None')}</code></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </div>
+        </Panel>
+      ))
+    )}
+  </>;
+}
+
 const FEATURE_INFO = {
-  events: { heading: 'Access events', kicker: 'SECURITY TELEMETRY', icon: 'activity', description: 'Explore each login, failed login, account change and privilege event.', need: 'GET /api/admin/events', fields: 'event_uid, device_id, event_id, occurred_at_utc, username, event_category', next: 'Your backend currently ingests raw events, but exposes only aggregate device counts to admin users.' },
-  accounts: { heading: 'Accounts & roles', kicker: 'IDENTITIES', icon: 'users', description: 'Inspect local accounts, groups and privileged memberships collected by agents.', need: 'GET /api/admin/snapshots/latest', fields: 'device_id, collected_at_utc, accounts, groups', next: 'The API stores account snapshots but currently provides only the total snapshot count.' },
   reviews: { heading: 'Access reviews', kicker: 'ACCESS GOVERNANCE', icon: 'clipboard', description: 'Review risky privileges, assign owners and track approval decisions.', need: 'Review workflow API + database tables', fields: 'review_id, device_id, identity, entitlement, reviewer, decision, status', next: 'The current MVP backend has no review workflow or risk recommendation endpoint yet.' },
 };
 function PlannedPage({ id, goTo }) {
   const info = FEATURE_INFO[id];
-  return <><div className="intro-bar"><div><div className="eyebrow">{info.kicker}</div><h1>{info.heading}</h1><p>{info.description}</p></div><span className="soft-badge"><Icon name="info" size={16}/> API required</span></div>
-    <Panel className="feature-panel"><div className="feature-layout"><EmptyGraphic icon={info.icon}/><div><span className="section-kicker">NEXT INTEGRATION</span><h2>Connect the detailed data endpoint</h2><p>{info.next}</p><div className="integration-spec"><div><span>Required endpoint / capability</span><code>{info.need}</code></div><div><span>Suggested response fields</span><code>{info.fields}</code></div></div><button className="secondary-button" onClick={()=>goTo('overview')}><Icon name="arrow" size={17}/> Return to overview</button></div></div></Panel>
+  return <><div className="intro-bar"><div><div className="eyebrow">{info?.kicker || 'GOVERNANCE'}</div><h1>{info?.heading || 'Module'}</h1><p>{info?.description || ''}</p></div><span className="soft-badge"><Icon name="info" size={16}/> In Roadmap</span></div>
+    <Panel className="feature-panel"><div className="feature-layout"><EmptyGraphic icon={info?.icon || 'clipboard'}/><div><span className="section-kicker">GOVERNANCE EXPANSION</span><h2>Access Review Workflow</h2><p>{info?.next || 'Review engine coming soon.'}</p><button className="secondary-button" onClick={()=>goTo('overview')}><Icon name="arrow" size={17}/> Return to overview</button></div></div></Panel>
   </>;
 }
 function ReportsPage({ summary, devices }) {
@@ -545,7 +755,9 @@ function Dashboard({ summary, onLogout, onRefresh, refreshing, refreshError, las
         {refreshError && <div className="refresh-warning" role="alert"><Icon name="alert" size={18}/><div><strong>Refresh failed.</strong> {refreshError} Showing the last successful response.</div><button onClick={onRefresh}>Try again</button></div>}
         {page==='overview' && <Overview summary={summary} devices={devices} goTo={navigate} onOpenAdd={() => setIsAddOpen(true)} />}
         {page==='devices' && <DevicesPage devices={devices} onOpenAdd={() => setIsAddOpen(true)} onDeleteDevice={handleDeleteDevice} />}
-        {FEATURE_INFO[page] && <PlannedPage id={page} goTo={navigate}/>}
+        {page==='events' && <EventsPage adminToken={adminToken} />}
+        {page==='accounts' && <AccountsPage adminToken={adminToken} />}
+        {page==='reviews' && <PlannedPage id="reviews" goTo={navigate}/>}
         {page==='reports' && <ReportsPage devices={devices} summary={summary}/>}
         {page==='settings' && <SettingsPage summary={summary} onLogout={onLogout} refresh={onRefresh}/>}
         <footer className="page-footer"><span>© {new Date().getFullYear()} AccessReviewAgent</span><span>Dynamic fleet management console</span></footer>

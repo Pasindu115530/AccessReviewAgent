@@ -373,3 +373,87 @@ def delete_device(device_id: str, x_admin_token: str | None = Header(default=Non
             if cur.rowcount == 0:
                 raise HTTPException(status_code=404, detail="Device not found")
     return {"status": "deleted", "device_id": device_id}
+
+
+@app.get("/api/admin/events")
+def list_events(
+    device_id: str | None = None,
+    category: str | None = None,
+    limit: int = 100,
+    x_admin_token: str | None = Header(default=None)
+):
+    verify_admin(x_admin_token)
+    limit = min(max(1, limit), 500)
+    query = """
+        SELECT event_uid, device_id, event_id, record_id, occurred_at_utc,
+               username, domain, source_ip, event_category, payload, received_at_utc
+        FROM agent_events
+    """
+    params: list[Any] = []
+    clauses: list[str] = []
+
+    if device_id:
+        clauses.append("device_id = %s")
+        params.append(device_id)
+    if category:
+        clauses.append("event_category = %s")
+        params.append(category)
+
+    if clauses:
+        query += " WHERE " + " AND ".join(clauses)
+
+    query += " ORDER BY occurred_at_utc DESC LIMIT %s"
+    params.append(limit)
+
+    with psycopg.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute(query, tuple(params))
+            events = [
+                {
+                    "event_uid": r[0],
+                    "device_id": r[1],
+                    "event_id": r[2],
+                    "record_id": r[3],
+                    "occurred_at_utc": r[4].isoformat() if r[4] else None,
+                    "username": r[5],
+                    "domain": r[6],
+                    "source_ip": r[7],
+                    "event_category": r[8],
+                    "payload": r[9],
+                    "received_at_utc": r[10].isoformat() if r[10] else None,
+                }
+                for r in cur.fetchall()
+            ]
+    return {"events": events, "count": len(events)}
+
+
+@app.get("/api/admin/snapshots/latest")
+def latest_snapshots(device_id: str | None = None, x_admin_token: str | None = Header(default=None)):
+    verify_admin(x_admin_token)
+    with psycopg.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cur:
+            if device_id:
+                cur.execute("""
+                    SELECT DISTINCT ON (device_id) device_id, collected_at_utc, payload, received_at_utc
+                    FROM agent_snapshots
+                    WHERE device_id = %s
+                    ORDER BY device_id, collected_at_utc DESC
+                """, (device_id,))
+            else:
+                cur.execute("""
+                    SELECT DISTINCT ON (device_id) device_id, collected_at_utc, payload, received_at_utc
+                    FROM agent_snapshots
+                    ORDER BY device_id, collected_at_utc DESC
+                """)
+            snapshots = [
+                {
+                    "device_id": r[0],
+                    "collected_at_utc": r[1].isoformat() if r[1] else None,
+                    "accounts": (r[2] or {}).get("accounts", []) if isinstance(r[2], dict) else [],
+                    "groups": (r[2] or {}).get("groups", []) if isinstance(r[2], dict) else [],
+                    "received_at_utc": r[3].isoformat() if r[3] else None,
+                }
+                for r in cur.fetchall()
+            ]
+    return {"snapshots": snapshots}
+

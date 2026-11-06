@@ -269,13 +269,16 @@ def admin_summary(x_admin_token: str | None = Header(default=None)):
             ]
 
             # Also include any device in events that might not be in agent_devices (e.g. legacy events)
-            registered_ids = {d["device_id"] for d in registered_devices}
             cur.execute("""
-                SELECT device_id, COUNT(*), MAX(occurred_at_utc)
-                FROM agent_events
-                WHERE device_id NOT IN %s
-                GROUP BY device_id
-            """, (tuple(registered_ids) if registered_ids else ("__none__",),))
+                SELECT 
+                    e.device_id, 
+                    COUNT(*) as event_count, 
+                    MAX(e.occurred_at_utc) as last_event_utc
+                FROM agent_events e
+                LEFT JOIN agent_devices d ON e.device_id = d.device_id
+                WHERE d.device_id IS NULL
+                GROUP BY e.device_id
+            """)
             for row in cur.fetchall():
                 registered_devices.append({
                     "device_id": row[0],
